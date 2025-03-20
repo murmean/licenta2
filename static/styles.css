@@ -1,0 +1,56 @@
+/* Ensure Preprocessing Options Are Visible */
+.row {
+    margin-bottom: 10px;
+}
+
+/* Fix Processed Text Box Size */
+#processedText {
+    margin-top: 10px;
+    font-size: 16px;
+    background-color: #fff;
+    border: 1px solid #ccc;
+    padding: 10px;
+    resize: none;
+    max-height: 300px; /* Limit height to avoid pushing buttons out */
+    overflow-y: auto;
+}
+
+/* Fix Button Size */
+.btn {
+    font-size: 16px;
+}
+
+/* Center Buttons */
+.text-center {
+    display: flex;
+    justify-content: center;
+}
+
+.highlight {
+    background-color: yellow;
+    font-weight: bold;
+    padding: 2px;
+    border-radius: 3px;
+}
+
+#fileInfo {
+    display: flex;
+    align-items: center;
+    margin-top: 5px;
+}
+
+#fileName {
+    font-size: 14px;
+    padding: 5px 10px;
+}
+
+#removeFileBtn {
+    font-size: 12px;
+    padding: 5px 8px;
+}
+
+#downloadTextBtn {
+    display: none; /* It will be shown when text is processed */
+    width: 100%;
+    text-align: center;
+}
