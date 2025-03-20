@@ -3,9 +3,14 @@ import os
 import gensim
 import pandas as pd
 import spacy
+import yake
 from flask import Flask, request, jsonify, render_template
 from gensim import corpora
+from sklearn.feature_extraction.text import TfidfVectorizer
 from textblob import TextBlob
+from sumy.parsers.plaintext import PlaintextParser
+from sumy.nlp.tokenizers import Tokenizer
+from sumy.summarizers.text_rank import TextRankSummarizer
 
 # Load spaCy NLP model
 nlp = spacy.load("en_core_web_sm")
@@ -26,6 +31,19 @@ class TextMiner:
     def load_data(self, text):
         self.documents = [text] if isinstance(text, str) else text
         return {"message": f"Loaded {len(self.documents)} documents."}
+
+    def train_model(self):
+        """
+        Trains the LDA model for topic modeling.
+        """
+        if not self.processed_docs:
+            return {"error": "No data available for training."}
+
+        dictionary = corpora.Dictionary(self.processed_docs)
+        corpus = [dictionary.doc2bow(doc) for doc in self.processed_docs]
+        self.model = gensim.models.LdaModel(corpus, num_topics=5, id2word=dictionary, passes=10)
+        self.model_trained = True
+        return {"message": "Model training completed."}
 
     def preprocess(self, lowercase, remove_punct, remove_stopwords, lemmatize):
         if not self.documents:
@@ -58,48 +76,92 @@ class TextMiner:
         sentiments = [TextBlob(" ".join(doc)).sentiment.polarity for doc in self.processed_docs]
         return {"sentiments": sentiments}
 
-    def generate_word_cloud(self):
-        # words = [word for doc in self.processed_docs for word in doc]
-        # if not words:
-        #     return {"error": "No words available for word cloud."}
-
-        # wordcloud = WordCloud(width=800, height=400, background_color='white').generate(" ".join(words))
-        # wordcloud_path = os.path.join("static", "wordcloud.png")
-        # wordcloud.to_file(wordcloud_path)
-        # return {"wordcloud": wordcloud_path}
-
-        return {"wordcloud": None}  # Return None instead of generating the word cloud
-
-    def train_model(self):
+    def extract_keywords_tfidf(self, top_n=10):
+        """
+        Extracts keywords using TF-IDF for multiple documents.
+        """
         if not self.processed_docs:
-            return {"error": "No data available for training."}
+            return {"error": "No processed documents available!"}
 
-        dictionary = corpora.Dictionary(self.processed_docs)
-        corpus = [dictionary.doc2bow(doc) for doc in self.processed_docs]
-        self.model = gensim.models.LdaModel(corpus, num_topics=5, id2word=dictionary, passes=10)
-        self.model_trained = True
-        return {"message": "Model training completed."}
+        vectorizer = TfidfVectorizer(stop_words="english", max_features=1000)
+        tfidf_matrix = vectorizer.fit_transform([" ".join(doc) for doc in self.processed_docs])
+        feature_names = vectorizer.get_feature_names_out()
 
-    def topic_modeling(self):
+        keywords = []
+        for doc_vector in tfidf_matrix:
+            scores = zip(feature_names, doc_vector.toarray().flatten())
+            sorted_scores = sorted(scores, key=lambda x: x[1], reverse=True)
+            keywords.append([word for word, score in sorted_scores[:top_n]])
+
+        return {"keywords": keywords}
+
+    def extract_keywords_yake(self, text, top_n=10):
+        """
+        Extracts keywords using YAKE for a single document.
+        """
+        kw_extractor = yake.KeywordExtractor(n=1, dedupLim=0.9, top=top_n)
+        keywords = kw_extractor.extract_keywords(text)
+        return {"keywords": [word for word, score in keywords]}
+
+    import string
+
+    def topic_modeling(self, num_topics=5, num_words=5):
+        """
+        Extracts distinct topics from LDA without redundant or meaningless words.
+        """
         if not self.model_trained:
             return {"error": "Train the model first!"}
 
-        # Extract top topics
-        topics = self.model.print_topics(num_words=5)
+        # Extract top words from LDA topics
+        raw_topics = self.model.print_topics(num_topics=num_topics, num_words=num_words)
 
-        # Extract Named Entities and noun chunks for better topic labels
+        unique_topics = set()  # Store unique topics
+        lda_topics = []
+
+        stopwords = set(nlp.Defaults.stop_words)  # Get spaCy stopwords
+
+        for topic in raw_topics:
+            topic_words = topic[1]  # Extract topic words
+            words = [word.split('*')[1].replace('"', '').strip() for word in topic_words.split('+')]
+
+            # ✅ Remove stopwords & short words (length < 3)
+            filtered_words = [word for word in words if word not in stopwords and len(word) > 2 and word.isalpha()]
+
+            if not filtered_words:
+                continue  # Skip empty topics
+
+            # Convert words into a sorted, comma-separated string
+            topic_str = ", ".join(sorted(set(filtered_words)))
+
+            if topic_str not in unique_topics:  # Avoid repeating topics
+                unique_topics.add(topic_str)
+                lda_topics.append(topic_str)
+
+        # Backup: Extract Named Entities if LDA fails
         entity_topics = set()
         for doc in self.documents:
             nlp_doc = nlp(doc)
-            for ent in nlp_doc.ents:  # Named Entities
+            for ent in nlp_doc.ents:
                 entity_topics.add(ent.text)
-            for chunk in nlp_doc.noun_chunks:  # Noun phrases
+            for chunk in nlp_doc.noun_chunks:
                 entity_topics.add(chunk.text)
 
-        # Keep only meaningful topics
-        filtered_topics = [topic for topic in entity_topics if len(topic.split()) > 1]
+        filtered_entities = [topic for topic in entity_topics if len(topic.split()) > 1]
 
-        return {"topics": filtered_topics[:5]}  # Return top 5 topics
+        # If LDA has no topics, use Named Entities
+        return {"topics": lda_topics[:num_topics] if lda_topics else filtered_entities[:num_topics]}
+
+
+
+    def summarize_text(self, text, num_sentences=3):
+        """
+        Generates a summary of the text using TextRank.
+        """
+        parser = PlaintextParser.from_string(text, Tokenizer("english"))
+        summarizer = TextRankSummarizer()
+        summary = summarizer(parser.document, num_sentences)
+
+        return {"summary": " ".join(str(sentence) for sentence in summary)}
 
 
 miner = TextMiner()
@@ -115,13 +177,11 @@ def analyze():
     text = request.form.get("text", "").strip()
     file = request.files.get("file")
 
-    # Handle file upload
     if file:
         filename = file.filename
         filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
         file.save(filepath)
 
-        # Read text from file
         if filename.endswith(".txt"):
             with open(filepath, "r", encoding="utf-8") as f:
                 text = f.read()
@@ -142,15 +202,37 @@ def analyze():
 
     miner.load_data(text)
     miner.preprocess(lowercase, remove_punct, remove_stopwords, lemmatize)
-    sentiment = miner.sentiment_analysis()
+
+    # ✅ Train LDA Model Before Extracting Topics
     miner.train_model()
+
+    sentiment = miner.sentiment_analysis()
     topics = miner.topic_modeling()
+
+    if isinstance(text, str) and len(text.split()) < 100:
+        keywords = miner.extract_keywords_yake(text, top_n=5)
+    else:
+        keywords = miner.extract_keywords_tfidf(top_n=5)
 
     return jsonify({
         "sentiment": sentiment.get("sentiments", [0])[0],
-        "topics": topics.get("topics", []),
-        "processed_text": " ".join(miner.processed_docs[0]),  # Processed text
-        "keywords": list(topics.get("topics", []))  # Keywords are extracted topics
+        "topics": topics.get("topics", []),  # ✅ Now using LDA-based topics
+        "processed_text": " ".join(miner.processed_docs[0]),
+        "keywords": keywords.get("keywords", [])  # Still using TF-IDF/YAKE for keywords
+    })
+
+
+@app.route("/summarize", methods=["POST"])
+def summarize():
+    text = request.form.get("text", "").strip()
+
+    if not text:
+        return jsonify({"error": "No text provided for summarization."})
+
+    summary = miner.summarize_text(text, num_sentences=3)
+
+    return jsonify({
+        "summary": summary.get("summary", "")
     })
 
 
