@@ -1,4 +1,4 @@
-document.getElementById("fileInput").addEventListener("change", function(event) {
+document.getElementById("fileInput").addEventListener("change", function (event) {
     let file = event.target.files[0];
     let fileInfo = document.getElementById("fileInfo");
     let fileNameDisplay = document.getElementById("fileName");
@@ -18,7 +18,7 @@ document.getElementById("fileInput").addEventListener("change", function(event) 
 });
 
 // ✅ Fix: Make remove file button work properly
-document.getElementById("removeFileBtn").addEventListener("click", function() {
+document.getElementById("removeFileBtn").addEventListener("click", function () {
     let fileInput = document.getElementById("fileInput");
     fileInput.value = ""; // Clear file input
     document.getElementById("fileInfo").style.display = "none"; // Hide file info
@@ -35,7 +35,7 @@ function stripHtmlTags(text) {
 function downloadProcessedText(text) {
     let cleanText = stripHtmlTags(text); // Remove HTML tags
     let filename = "processed_text_" + new Date().toISOString().replace(/:/g, "-") + ".txt";
-    let blob = new Blob([cleanText], { type: "text/plain" });
+    let blob = new Blob([cleanText], {type: "text/plain"});
     let link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
     link.download = filename;
@@ -45,7 +45,7 @@ function downloadProcessedText(text) {
 }
 
 // ✅ Fix: Ensure downloaded file has clean text
-document.getElementById("textForm").addEventListener("submit", async function(event) {
+document.getElementById("textForm").addEventListener("submit", async function (event) {
     event.preventDefault();
 
     let formData = new FormData();
@@ -106,7 +106,7 @@ document.getElementById("textForm").addEventListener("submit", async function(ev
         //  Show the Download button
         let downloadBtn = document.getElementById("downloadTextBtn");
         downloadBtn.style.display = "block";
-        downloadBtn.onclick = function() {
+        downloadBtn.onclick = function () {
             downloadProcessedText(processedText);
         };
 
@@ -115,3 +115,37 @@ document.getElementById("textForm").addEventListener("submit", async function(ev
         alert("An error occurred while processing the text.");
     }
 });
+
+document.getElementById("summarizeBtn").addEventListener("click", async function () {
+    let textInput = document.getElementById("textInput").value.trim();
+
+    if (!textInput) {
+        alert("Please enter text before summarizing.");
+        return;
+    }
+
+    let formData = new FormData();
+    formData.append("text", textInput);
+
+    try {
+        let response = await fetch("/summarize", {
+            method: "POST",
+            body: formData
+        });
+
+        let data = await response.json();
+        if (!data || data.error) {
+            alert("Error generating summary: " + (data.error || "Unknown error"));
+            return;
+        }
+
+        // ✅ Display Summary
+        document.getElementById("summaryText").textContent = data.summary;
+        document.getElementById("summaryContainer").style.display = "block";
+
+    } catch (error) {
+        console.error("Error during summarization:", error);
+        alert("An error occurred while generating the summary.");
+    }
+});
+
